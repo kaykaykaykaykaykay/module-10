@@ -5,3 +5,7 @@ When the server starts, it listens on port 2000 for incoming WebSocket connectio
 When a client types a message and presses enter, the message is sent to the server via the WebSocket connection. The server then broadcasts that message to all connected clients, so every client sees what every other client typed.
 This works asynchronously, the server handles multiple clients at the same time without blocking. This is done using tokio::select! which listens for incoming messages from the client and messages from the broadcast channel. When either arrives, it handles it immediately without waiting for the other.
 The broadcast channel (bcast_tx and bcast_rx) connects all the clients, when any client sends a message, the server puts it into the broadcast channel, and every connected client's handler receives it and forwards it to their respective client.
+
+## Tutorial 2.2
+server.rs and client.rs. In server.rs, the bind address was changed from 127.0.0.1:2000 to 127.0.0.1:8080. In client.rs, the connection URI was changed from ws://127.0.0.1:2000 to ws://127.0.0.1:8080.  both sides server and client must use the same port. The server defines which port it listens on, and the client must connect to that exact same port. The ws:// prefix is the WebSocket protocol, similar to how http:// or https:// are protocols for web browsing.
+
