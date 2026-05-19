@@ -9,6 +9,8 @@ use crate::{services::websocket::WebsocketService, User};
 pub enum Msg {
     HandleMsg(String),
     SubmitMessage,
+    SubmitThought,
+    LikeThought,
 }
 
 #[derive(Deserialize)]
@@ -23,6 +25,9 @@ pub enum MsgTypes {
     Users,
     Register,
     Message,
+    Showerthought,
+    Likethought,
+    Thoughtupdate,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -39,13 +44,23 @@ struct UserProfile {
     avatar: String,
 }
 
+#[derive(Deserialize, Clone)]
+struct ShowerThoughtData {
+    from: String,
+    text: String,
+    likes: u32,
+}
+
 pub struct Chat {
     users: Vec<UserProfile>,
     chat_input: NodeRef,
+    thought_input: NodeRef,
     _producer: Box<dyn Bridge<EventBus>>,
     wss: WebsocketService,
     messages: Vec<MessageData>,
+    current_thought: Option<ShowerThoughtData>,
 }
+
 impl Component for Chat {
     type Message = Msg;
     type Properties = ();
@@ -76,8 +91,10 @@ impl Component for Chat {
             users: vec![],
             messages: vec![],
             chat_input: NodeRef::default(),
+            thought_input: NodeRef::default(),
             wss,
             _producer: EventBus::bridge(ctx.link().callback(Msg::HandleMsg)),
+            current_thought: None,
         }
     }
 
@@ -107,6 +124,15 @@ impl Component for Chat {
                         self.messages.push(message_data);
                         return true;
                     }
+                    MsgTypes::Thoughtupdate => {
+                        if let Some(data) = msg.data {
+                            if let Ok(thought) = serde_json::from_str::<ShowerThoughtData>(&data) {
+                                self.current_thought = Some(thought);
+                                return true;
+                            }
+                        }
+                        false
+                    }
                     _ => {
                         return false;
                     }
@@ -132,11 +158,52 @@ impl Component for Chat {
                 };
                 false
             }
+            Msg::SubmitThought => {
+                let input = self.thought_input.cast::<HtmlInputElement>();
+                if let Some(input) = input {
+                    let value = input.value();
+                    if !value.is_empty() {
+                        let message = WebSocketMessage {
+                            message_type: MsgTypes::Showerthought,
+                            data: Some(value),
+                            data_array: None,
+                        };
+                        if let Err(e) = self
+                            .wss
+                            .tx
+                            .clone()
+                            .try_send(serde_json::to_string(&message).unwrap())
+                        {
+                            log::debug!("error sending to channel: {:?}", e);
+                        }
+                        input.set_value("");
+                    }
+                };
+                false
+            }
+            Msg::LikeThought => {
+                let message = WebSocketMessage {
+                    message_type: MsgTypes::Likethought,
+                    data: None,
+                    data_array: None,
+                };
+                if let Err(e) = self
+                    .wss
+                    .tx
+                    .clone()
+                    .try_send(serde_json::to_string(&message).unwrap())
+                {
+                    log::debug!("error sending to channel: {:?}", e);
+                }
+                false
+            }
         }
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let submit = ctx.link().callback(|_| Msg::SubmitMessage);
+        let submit_thought = ctx.link().callback(|_| Msg::SubmitThought);
+        let like_thought = ctx.link().callback(|_| Msg::LikeThought);
 
         html! {
             <div class="flex w-screen">
@@ -163,12 +230,59 @@ impl Component for Chat {
                     }
                 </div>
                 <div class="grow h-screen flex flex-col">
-                    <div class="w-full h-14 border-b-2 border-gray-300"><div class="text-xl p-3">{"💬 Chat!"}</div></div>
+                    <div class="w-full h-14 border-b-2 border-gray-300">
+                        <div class="text-xl p-3">{"💬 Chat!"}</div>
+                    </div>
+
+                    // Shower thought card
+                    <div class="mx-4 mt-3 mb-1 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+                        <div class="text-xs font-bold text-blue-500 mb-2">{"🚿 Shower Thought"}</div>
+                        {
+                            if let Some(thought) = &self.current_thought {
+                                let avatar = format!(
+                                    "https://avatars.dicebear.com/api/adventurer-neutral/{}.svg",
+                                    thought.from
+                                );
+                                let likes = thought.likes;
+                                html! {
+                                    <div class="flex items-start justify-between">
+                                        <div class="flex items-start gap-2">
+                                            <img class="w-8 h-8 rounded-full flex-shrink-0" src={avatar} alt="avatar"/>
+                                            <div>
+                                                <div class="text-xs font-semibold text-gray-700">{thought.from.clone()}</div>
+                                                <div class="text-sm text-gray-800 mt-1">{thought.text.clone()}</div>
+                                            </div>
+                                        </div>
+                                        <button onclick={like_thought} class="flex items-center gap-1 ml-4 px-2 py-1 text-sm bg-white border border-blue-200 rounded-full hover:bg-blue-100 flex-shrink-0">
+                                            <span>{"👍"}</span>
+                                            <span class="text-blue-600 font-semibold">{likes}</span>
+                                        </button>
+                                    </div>
+                                }
+                            } else {
+                                html! {
+                                    <div class="text-xs text-gray-400 italic">{"No shower thought yet. Share yours below!"}</div>
+                                }
+                            }
+                        }
+                        <div class="flex mt-2 gap-2">
+                            <input
+                                ref={self.thought_input.clone()}
+                                type="text"
+                                placeholder="Share a shower thought..."
+                                class="block w-full py-1 pl-3 text-sm bg-white border border-blue-200 rounded-full outline-none focus:text-gray-700"
+                            />
+                            <button onclick={submit_thought} class="px-3 py-1 text-xs bg-blue-500 text-white rounded-full hover:bg-blue-600 whitespace-nowrap">
+                                {"Share"}
+                            </button>
+                        </div>
+                    </div>
+
                     <div class="w-full grow overflow-auto border-b-2 border-gray-300">
                         {
-                            self.messages.iter().map(|m| {
-                                let user = self.users.iter().find(|u| u.name == m.from).unwrap();
-                                html!{
+                            self.messages.iter().filter_map(|m| {
+                                let user = self.users.iter().find(|u| u.name == m.from)?;
+                                Some(html!{
                                     <div class="flex items-end w-3/6 bg-gray-100 m-8 rounded-tl-lg rounded-tr-lg rounded-br-lg ">
                                         <img class="w-8 h-8 rounded-full m-3" src={user.avatar.clone()} alt="avatar"/>
                                         <div class="p-3">
@@ -184,10 +298,9 @@ impl Component for Chat {
                                             </div>
                                         </div>
                                     </div>
-                                }
+                                })
                             }).collect::<Html>()
                         }
-
                     </div>
                     <div class="w-full h-14 flex px-3 items-center">
                         <input ref={self.chat_input.clone()} type="text" placeholder="Message" class="block w-full py-2 pl-4 mx-3 bg-gray-100 rounded-full outline-none focus:text-gray-700" name="message" required=true />
