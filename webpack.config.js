@@ -8,6 +8,7 @@ module.exports = {
     mode: 'production',
     devServer: {
         port: 8000,
+        open: false,
     },
     entry: './bootstrap.js',
     output: {
