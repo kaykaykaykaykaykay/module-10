@@ -1,6 +1,7 @@
 import WebSocket, { WebSocketServer } from 'ws';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
+
 interface User {
     ws: WebSocket;
     nick: String;
@@ -13,7 +14,15 @@ interface Message {
     dataArray: String[];
 }
 
+interface ShowerThought {
+    from: string;
+    text: string;
+    likes: number;
+}
+
 let users: User[] = [];
+let messageHistory: string[] = [];
+let currentThought: ShowerThought | null = null;
 
 console.log(`Listening on port ${PORT}`);
 const wss = new WebSocketServer({ port: PORT });
@@ -29,21 +38,40 @@ wss.on('connection', (ws: WebSocket) => {
                 case 'register':
                     users.push({ ws, nick: parsed_data.data, isAlive: true });
                     broadcast(JSON.stringify({ messageType: 'users', dataArray: users.map((u) => u.nick) }));
+                    // Send history then current thought to the new user only
+                    messageHistory.forEach((msg) => ws.send(msg));
+                    if (currentThought) {
+                        ws.send(JSON.stringify({ messageType: 'thoughtupdate', data: JSON.stringify(currentThought) }));
+                    }
                     break;
                 case 'message':
                     const sender = users.find((u) => u.ws === ws);
                     if (sender) {
-                        broadcast(
-                            JSON.stringify({
-                                messageType: 'message',
-                                data: JSON.stringify({
-                                    from: sender.nick,
-                                    message: parsed_data.data,
-                                    time: Date.now(),
-                                }),
-                            })
-                        );
+                        const message = JSON.stringify({
+                            messageType: 'message',
+                            data: JSON.stringify({
+                                from: sender.nick,
+                                message: parsed_data.data,
+                                time: Date.now(),
+                            }),
+                        });
+                        messageHistory.push(message);
+                        broadcast(message);
                     }
+                    break;
+                case 'showerthought':
+                    const thinker = users.find((u) => u.ws === ws);
+                    if (thinker && parsed_data.data) {
+                        currentThought = { from: thinker.nick as string, text: parsed_data.data as string, likes: 0 };
+                        broadcast(JSON.stringify({ messageType: 'thoughtupdate', data: JSON.stringify(currentThought) }));
+                    }
+                    break;
+                case 'likethought':
+                    if (currentThought) {
+                        currentThought.likes++;
+                        broadcast(JSON.stringify({ messageType: 'thoughtupdate', data: JSON.stringify(currentThought) }));
+                    }
+                    break;
             }
         } catch (e) {
             console.log('Error in message', e);
